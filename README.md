@@ -1,5 +1,10 @@
 # WSL-Tunnel
 
+[![Linux VRF](https://img.shields.io/badge/Linux-VRF%20%2F%20l3mdev-FCC624?logo=linux&logoColor=black)](https://docs.kernel.org/networking/vrf.html)
+[![Layer 3 Proxy](https://img.shields.io/badge/Network-Layer%203%20Tunnel-4A90E2)](#)
+[![tun2socks](https://img.shields.io/badge/Core-tun2socks-2C3E50)](https://github.com/xjasonlyu/tun2socks)
+[![Bash](https://img.shields.io/badge/Script-Bash-4EAA25?logo=gnu-bash&logoColor=white)](#)
+
 A per-session transparent Layer 3 proxy solution for Windows 11 WSL2 (`networkingMode=mirrored`). Routes designated terminal sessions through SOCKS5 without modifying host networking or relying on `http_proxy` environment variables.
 
 [中文文档 (Chinese)](README_zh.md)

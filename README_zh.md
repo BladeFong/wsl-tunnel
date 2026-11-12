@@ -1,5 +1,10 @@
 # WSL-Tunnel
 
+[![Linux VRF](https://img.shields.io/badge/Linux-VRF%20%2F%20l3mdev-FCC624?logo=linux&logoColor=black)](https://docs.kernel.org/networking/vrf.html)
+[![Layer 3 Proxy](https://img.shields.io/badge/Network-Layer%203%20Tunnel-4A90E2)](#)
+[![tun2socks](https://img.shields.io/badge/Core-tun2socks-2C3E50)](https://github.com/xjasonlyu/tun2socks)
+[![Bash](https://img.shields.io/badge/Script-Bash-4EAA25?logo=gnu-bash&logoColor=white)](#)
+
 适用于 Windows 11 WSL2（镜像网络模式）的单会话透明三层分流代理方案。无需修改 Windows 宿主网络配置，无需配置 `http_proxy` 环境变量。
 
 [English Documentation](README.md)
