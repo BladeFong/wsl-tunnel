@@ -4,6 +4,7 @@
 [![Layer 3 Proxy](https://img.shields.io/badge/Network-Layer%203%20Tunnel-4A90E2)](#)
 [![tun2socks](https://img.shields.io/badge/Core-tun2socks-2C3E50)](https://github.com/xjasonlyu/tun2socks)
 [![Bash](https://img.shields.io/badge/Script-Bash-4EAA25?logo=gnu-bash&logoColor=white)](#)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
 适用于 Windows 11 WSL2（镜像网络模式）的单会话透明三层分流代理方案。无需修改 Windows 宿主网络配置，无需配置 `http_proxy` 环境变量。
 
@@ -137,3 +138,9 @@ sudo /usr/local/bin/wsl-tunnel.sh -n clash --stop
 
 > [!NOTE]
 > **网络接口命名长度说明**：Linux 内核对网络接口名称有 15 个字符的硬性上限（`IFNAMSIZ`）。脚本内部会为实例分别创建 `vrf-<name>`、`tun-<name>` 和 `lo-<name>` 虚拟设备，因此 `-n / --name` 参数传入的实例名称**请保持在 11 个字符以内**（仅使用字母、数字、下划线或短横线），避免触发内核接口名超长错误。
+
+---
+
+## 开源协议
+
+本项目采用 [MIT 许可证](LICENSE)。

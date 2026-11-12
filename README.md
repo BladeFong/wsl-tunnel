@@ -4,6 +4,7 @@
 [![Layer 3 Proxy](https://img.shields.io/badge/Network-Layer%203%20Tunnel-4A90E2)](#)
 [![tun2socks](https://img.shields.io/badge/Core-tun2socks-2C3E50)](https://github.com/xjasonlyu/tun2socks)
 [![Bash](https://img.shields.io/badge/Script-Bash-4EAA25?logo=gnu-bash&logoColor=white)](#)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
 A per-session transparent Layer 3 proxy solution for Windows 11 WSL2 (`networkingMode=mirrored`). Routes designated terminal sessions through SOCKS5 without modifying host networking or relying on `http_proxy` environment variables.
 
@@ -137,3 +138,9 @@ Launching this profile creates a dedicated tab running transparently through the
 
 > [!NOTE]
 > **Instance Name Length Limit**: Linux kernel interface names are strictly limited to 15 characters (`IFNAMSIZ`). Because WSL-Tunnel creates device names with prefixes (`vrf-<name>`, `tun-<name>`, `lo-<name>`), the instance name passed to `-n / --name` **must not exceed 11 characters** (alphanumeric, underscore, or hyphen).
+
+---
+
+## License
+
+This project is licensed under the [MIT License](LICENSE).
