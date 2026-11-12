@@ -1,0 +1,16 @@
+# Log files
+*.log
+/tmp/
+
+# Binary files
+tun2socks
+tun2socks-*
+*.exe
+
+# OS generated
+.DS_Store
+Thumbs.db
+
+# Documentation & Review reports
+docs/
+
