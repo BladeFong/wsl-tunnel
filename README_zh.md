@@ -121,6 +121,10 @@ sudo /usr/local/bin/wsl-tunnel.sh -n clash --stop
 
 之后在 Windows Terminal 下拉菜单中点击该配置，即可秒级打开专属隔离网络终端。
 
+### 4. 前置扩展钩子（可选）
+
+若在 `wsl-tunnel.sh` 同级目录下存在 `pre-start.sh`，脚本将在初始化网络前自动调用执行。适用于个性化环境准备（如提前唤醒外部磁盘、挂载网络存储等），彻底与核心脚本解耦。
+
 ---
 
 ## 命令行参数一览

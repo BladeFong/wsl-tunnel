@@ -113,7 +113,16 @@ if [ "$(id -u)" -ne 0 ]; then
     exit 1
 fi
 
-# 4. 计算路由表 ID 与接口命名
+# 4. 执行同级目录可选前置钩子脚本 (Pre-start Hook)
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PRE_HOOK="$SCRIPT_DIR/pre-start.sh"
+if [ -x "$PRE_HOOK" ]; then
+    "$PRE_HOOK" || true
+elif [ -f "$PRE_HOOK" ]; then
+    bash "$PRE_HOOK" || true
+fi
+
+# 5. 计算路由表 ID 与接口命名
 if [ -n "$CUSTOM_TABLE" ]; then
     TABLE_ID="$CUSTOM_TABLE"
 else
@@ -294,9 +303,9 @@ echo " 本地回环: 127.0.0.1 ($LO_DEV)"
 echo " 用户身份: $TARGET_USER ($TARGET_SHELL)"
 echo "=================================================="
 
-# 13. 私有 Mount Namespace 隔离 DNS 并降权进入 VRF 交互终端
-exec unshare -m --propagation private bash -c "
-    mount --make-rprivate / 2>/dev/null || true
+# 14. 单向从属 Mount Namespace 隔离 DNS 并降权进入 VRF 交互终端
+exec unshare -m --propagation slave bash -c "
+    mount --make-rslave / 2>/dev/null || true
     mount --bind '$RUN_DIR/resolv.conf' /etc/resolv.conf
     cd '$TARGET_HOME'
     exec ip vrf exec '$VRF_NAME' setpriv \

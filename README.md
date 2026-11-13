@@ -121,6 +121,10 @@ Add a profile to your Windows Terminal `settings.json`:
 
 Launching this profile creates a dedicated tab running transparently through the specified proxy endpoint while all other tabs and Windows applications remain direct.
 
+### 4. Pre-start Hook (Optional)
+
+If a script named `pre-start.sh` exists in the same directory as `wsl-tunnel.sh`, it will be executed automatically before initializing network interfaces. This allows custom environment preparation (e.g., waking up external disks or mounting network shares) without modifying core script logic.
+
 ---
 
 ## CLI Options

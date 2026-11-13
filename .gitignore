@@ -14,3 +14,6 @@ Thumbs.db
 # Documentation & Review reports
 docs/
 
+# Local custom hooks
+pre-start.sh
+
