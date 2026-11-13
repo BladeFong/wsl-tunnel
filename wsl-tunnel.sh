@@ -331,6 +331,9 @@ echo " 用户身份: $TARGET_USER ($TARGET_SHELL)"
 echo "=================================================="
 
 # 14. 单向从属 Mount Namespace 隔离 DNS 并降权进入 VRF 交互终端
+# GUI/桌面会话变量说明：WSLg 环境下 XDG_RUNTIME_DIR 与 DBUS_SESSION_BUS_ADDRESS 是
+# uid 特异路径（root 启动方携带的是 /run/user/0，不可透传），必须按目标用户派生；
+# WAYLAND_DISPLAY / DISPLAY / PULSE_SERVER 等非 uid 变量继承启动方取值并提供 WSLg 默认值。
 exec unshare -m --propagation slave bash -c "
     mount --make-rslave / 2>/dev/null || true
     mount --bind '$RUN_DIR/resolv.conf' /etc/resolv.conf
@@ -349,6 +352,11 @@ exec unshare -m --propagation slave bash -c "
         PATH='/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:$TARGET_HOME/.local/bin' \
         WSL_INTEROP='${WSL_INTEROP:-}' \
         WSL_DISTRO_NAME='${WSL_DISTRO_NAME:-}' \
-        DISPLAY='${DISPLAY:-}' \
+        DISPLAY='${DISPLAY:-:0}' \
+        WAYLAND_DISPLAY='${WAYLAND_DISPLAY:-wayland-0}' \
+        XDG_RUNTIME_DIR='/run/user/$TARGET_UID' \
+        XDG_DATA_DIRS='${XDG_DATA_DIRS:-/usr/local/share:/usr/share}' \
+        DBUS_SESSION_BUS_ADDRESS='unix:path=/run/user/$TARGET_UID/bus' \
+        PULSE_SERVER='${PULSE_SERVER:-unix:/mnt/wslg/PulseServer}' \
         '$TARGET_SHELL' -l
 "
