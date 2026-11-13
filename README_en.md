@@ -50,6 +50,7 @@ Linux VRF Domain (l3mdev) ────────────> Dedicated FIB ta
 2. **Per-Session VRF Isolation**: Associates the current shell process tree with a dedicated Virtual Routing and Forwarding table via `cgroups-bpf`, leaving the system's global routing table intact.
 3. **Bidirectional Loopback Interconnect (VRF Device Loopback)**: Injects a `local 127.0.0.0/8` route pointing at the VRF device itself into the instance routing table. The kernel VRF driver's `vrf_local_xmit` loop re-injects loopback packets back into the local stack while preserving `skb_dst` and the l3mdev context; combined with `net.ipv4.tcp_l3mdev_accept=1`, this yields **bidirectional** connectivity between in-session `connect 127.0.0.1:<port>` and default-namespace listeners (`docker-proxy`, host services, etc.). Two hardening measures accompany this: the l3mdev policy rule is promoted to priority 0 (so it is not preempted by the priority-1 loopback hijack rule `ipproto tcp/udp lookup 127` injected by WSL2 mirrored mode, with zero impact on main-session traffic that carries no l3mdev context), and `iif vrf-<name>` exemptions are added for the raw-table DROP and nat-table DNAT rules that Docker installs for published ports (loopback packets re-entering the stack via the VRF device must be explicitly accepted and must skip DNAT — published ports are relayed by user-space `docker-proxy` exactly as the main session does).
 4. **DNS Isolation with Slave Propagation**: Uses `unshare -m --propagation slave` to bind-mount a clean `/etc/resolv.conf`, eliminating host Fake-IP interference while allowing dynamically attached host disks or hot-plugged devices to propagate into the session automatically.
+5. **Full Desktop Session Environment**: On startup, WSLg desktop session variables (`XDG_RUNTIME_DIR` / `WAYLAND_DISPLAY` / `DBUS_SESSION_BUS_ADDRESS` / `PULSE_SERVER`, etc.) are derived per target user and passed through, so GUI applications such as Edge run directly inside the tunnel terminal with working audio output.
 
 > [!NOTE]
 > **Loopback Port Semantics & Space Trade-off**:
@@ -67,6 +68,15 @@ Linux VRF Domain (l3mdev) ────────────> Dedicated FIB ta
 | **Host System Interference** | None | **High (Host hijacked)** | None | **None (Global networking untouched)** |
 | **Local `127.0.0.1` Access & Binding** | Yes | Conditional | Yes | **Yes (VRF loopback, bidirectional; in-domain listeners take precedence)** |
 | **Concurrent Multi-Gateways** | Clunky | Impossible | Complex | **Yes (Multiple tabs with distinct proxies)** |
+
+---
+
+## Known Limitations
+
+* **Proxy-side domain-based rules do not apply (inherent to tun2socks)**: Traffic from the session is handed to the SOCKS5 endpoint with **bare IP destinations**; domain-based routing rules on the proxy side (e.g. Clash `DOMAIN-SUFFIX` / `GEOSITE`) never match, so affected sites may land on the fallback node. Cover them with `IP-CIDR` rules or ensure the fallback group points at a working node. Browser-type applications usually carry their own DoH / fallback paths and are generally unaffected.
+* **Rule rebuild after Docker restarts**: The Docker daemon or container restarts re-insert its raw/nat rules; if they land ahead of ours and break in-session access to published ports, **simply re-run this script to restore** (idempotent, takes seconds).
+* **IPv6 loopback not covered**: The loopback interconnect targets IPv4 `127.0.0.0/8`; `::1` is out of scope.
+* **In-domain port binding conflicts**: Listening on a port already used by a host service yields `EADDRINUSE`; see the trade-off note above.
 
 ---
 
