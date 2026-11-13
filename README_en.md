@@ -35,7 +35,7 @@ Linux Mount Namespace (unshare -m --propagation slave) ──> Bind-mounts clean
       │
 Linux VRF Domain (l3mdev) ────────────> Dedicated FIB table (Table ID)
       │                                   │
-      ├─ VRF Device Loopback (vrf_local_xmit) ─────┴─> local 127.0.0.0/8 (Bidirectional access to host & Docker mapped ports)
+      ├─ Loopback Interconnect (127.0.0.0/8) ─────┴─> Direct to host & Docker mapped ports
       │
       └─ Native TUN Device (tun-<name>)
             │ (Raw L3 IP packets, zero ARP overhead)
@@ -48,13 +48,12 @@ Linux VRF Domain (l3mdev) ────────────> Dedicated FIB ta
 
 1. **Pure L3 Tunneling**: Launches a native `tun2socks` daemon attached to `/dev/net/tun`, processing raw IP packets via a user-space TCP/IP stack.
 2. **Per-Session VRF Isolation**: Associates the current shell process tree with a dedicated Virtual Routing and Forwarding table via `cgroups-bpf`, leaving the system's global routing table intact.
-3. **Bidirectional Loopback Interconnect (VRF Device Loopback)**: Injects a `local 127.0.0.0/8` route pointing at the VRF device itself into the instance routing table. The kernel VRF driver's `vrf_local_xmit` loop re-injects loopback packets back into the local stack while preserving `skb_dst` and the l3mdev context; combined with `net.ipv4.tcp_l3mdev_accept=1`, this yields **bidirectional** connectivity between in-session `connect 127.0.0.1:<port>` and default-namespace listeners (`docker-proxy`, host services, etc.). Two hardening measures accompany this: the l3mdev policy rule is promoted to priority 0 (so it is not preempted by the priority-1 loopback hijack rule `ipproto tcp/udp lookup 127` injected by WSL2 mirrored mode, with zero impact on main-session traffic that carries no l3mdev context), and `iif vrf-<name>` exemptions are added for the raw-table DROP and nat-table DNAT rules that Docker installs for published ports (loopback packets re-entering the stack via the VRF device must be explicitly accepted and must skip DNAT — published ports are relayed by user-space `docker-proxy` exactly as the main session does).
+3. **Direct Host & Docker Service Access**: `127.0.0.1:<port>` from the session preferentially reaches in-session listeners, and otherwise transparently reaches the same port on the host — local services and Docker published ports (e.g. `3003`, `5432`) alike — exactly matching `-p` declarations with zero offset, no proxy rules, no escape commands.
 4. **DNS Isolation with Slave Propagation**: Uses `unshare -m --propagation slave` to bind-mount a clean `/etc/resolv.conf`, eliminating host Fake-IP interference while allowing dynamically attached host disks or hot-plugged devices to propagate into the session automatically.
-5. **Full Desktop Session Environment**: On startup, WSLg desktop session variables (`XDG_RUNTIME_DIR` / `WAYLAND_DISPLAY` / `DBUS_SESSION_BUS_ADDRESS` / `PULSE_SERVER`, etc.) are derived per target user and passed through, so GUI applications such as Edge run directly inside the tunnel terminal with working audio output.
+5. **GUI Application Compatibility**: Passes through the WSLg desktop session environment so GUI applications like Edge run directly inside the tunnel terminal, with working audio output.
 
 > [!NOTE]
-> **Loopback Port Semantics & Space Trade-off**:
-> Connections to `127.0.0.1:<port>` from within the session preferentially hit **in-domain listeners** (the kernel naturally scores sockets by their l3mdev binding); when no in-domain listener exists, the connection transparently reaches the same port on the default namespace. Port semantics match Docker `-p` publish declarations exactly: no offset, no proxy rules, no escape commands. The trade-off is that bind-conflict checking applies to the whole network namespace: binding a port inside the session that a host service already listens on yields `EADDRINUSE` (`Address already in use`). For developer and test terminal environments, this is the optimal balance for local container integration.
+> **Port space trade-off**: binding a port inside the session that a host service already listens on yields `EADDRINUSE` (bind checking spans the whole network namespace). This is the accepted trade-off for development and test terminals.
 
 ---
 
@@ -66,7 +65,7 @@ Linux VRF Domain (l3mdev) ────────────> Dedicated FIB ta
 | **Go / Rust Static Binaries** | Often ignored | Supported | **Broken** | **Fully supported (Native L3)** |
 | **UDP & DNS Handling** | No | Yes | Partial | **Yes (Isolated DNS mount)** |
 | **Host System Interference** | None | **High (Host hijacked)** | None | **None (Global networking untouched)** |
-| **Local `127.0.0.1` Access & Binding** | Yes | Conditional | Yes | **Yes (VRF loopback, bidirectional; in-domain listeners take precedence)** |
+| **Local `127.0.0.1` Access & Binding** | Yes | Conditional | Yes | **Yes (direct to host & Docker; in-session listeners take precedence)** |
 | **Concurrent Multi-Gateways** | Clunky | Impossible | Complex | **Yes (Multiple tabs with distinct proxies)** |
 
 ---
