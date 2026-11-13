@@ -133,7 +133,6 @@ fi
 
 VRF_NAME="vrf-${INSTANCE_NAME}"
 TUN_DEV="tun-${INSTANCE_NAME}"
-LO_DEV="lo-${INSTANCE_NAME}"
 TUN_IP="172.29.$((TABLE_ID % 250)).1/30"
 RUN_DIR="/run/wsl-tunnel/${INSTANCE_NAME}"
 
@@ -144,14 +143,25 @@ if [ "$STOP_MODE" = true ]; then
     # 终止后台 tun2socks 进程
     pkill -f "tun2socks.*${TUN_DEV}" >/dev/null 2>&1 || true
     
-    # 清理虚拟网络接口
+    # 清理虚拟网络接口 (兼容清理历史残留的虚拟 lo 设备)
     ip link del dev "$TUN_DEV" 2>/dev/null || true
-    ip link del dev "$LO_DEV" 2>/dev/null || true
+    ip link del dev "lo-${INSTANCE_NAME}" 2>/dev/null || true
     ip link del dev "$VRF_NAME" 2>/dev/null || true
     
     # 清理路由表规则
     ip route flush table "$TABLE_ID" 2>/dev/null || true
-    
+
+    # 清理域内环回放行规则 (raw/nat，均以本实例 VRF 设备为入口匹配)
+    if command -v iptables >/dev/null 2>&1; then
+        iptables -t raw -D PREROUTING -i "$VRF_NAME" -d 127.0.0.0/8 -j ACCEPT 2>/dev/null || true
+        iptables -t nat -D PREROUTING -i "$VRF_NAME" -d 127.0.0.0/8 -j ACCEPT 2>/dev/null || true
+    fi
+
+    # 最后一个 VRF 实例关停时，回收前移的 l3mdev 策略规则 (多实例并存时保留)
+    if ! ip -o link show type vrf 2>/dev/null | grep -q .; then
+        ip rule del pref 0 l3mdev 2>/dev/null || true
+    fi
+
     # 清理运行时 DNS 配置
     rm -rf "$RUN_DIR" 2>/dev/null || true
     rm -f "/tmp/tun2socks-${INSTANCE_NAME}.log" 2>/dev/null || true
@@ -265,19 +275,15 @@ ip link set dev "$VRF_NAME" up
 sysctl -w net.ipv4.tcp_l3mdev_accept=1 >/dev/null 2>&1 || true
 sysctl -w net.ipv4.udp_l3mdev_accept=1 >/dev/null 2>&1 || true
 
-# 10. 配置 VRF 专属回环网卡（绑定 127.0.0.1，满足本地 IPC / 服务监听需求）
-modprobe dummy 2>/dev/null || true
-if ! ip link show dev "$LO_DEV" >/dev/null 2>&1; then
-    ip link add dev "$LO_DEV" type dummy
+# l3mdev 策略规则前移至优先级 0。WSL2 镜像模式会在优先级 1 注入 "ipproto tcp/udp lookup 127"
+# 全局规则（table 127 经 loopback0 中转 Windows 镜像回环桥），会抢先劫持 VRF 域内对 127.0.0.1
+# 的路由查找；VRF 驱动对本域出向包的二次查表也仅携带 l3mdev 上下文。前移后域内流量可率先命中
+# 实例路由表，且不携带 l3mdev 上下文的主会话流量完全不匹配本规则（零干扰）。
+if ! ip rule show | awk '$1 == "0:"' | grep -q "l3mdev"; then
+    ip rule add l3mdev pref 0
 fi
-CURRENT_LO_MASTER=$(ip -d link show dev "$LO_DEV" | grep -o 'master [^ ]*' | awk '{print $2}' || true)
-if [ "$CURRENT_LO_MASTER" != "$VRF_NAME" ]; then
-    ip link set dev "$LO_DEV" master "$VRF_NAME"
-fi
-ip addr add 127.0.0.1/8 dev "$LO_DEV" 2>/dev/null || true
-ip link set dev "$LO_DEV" up
 
-# 11. 将 TUN 网卡加入 VRF 并配置默认路由
+# 10. 将 TUN 网卡加入 VRF 并配置默认路由与本地回环路由
 CURRENT_TUN_MASTER=$(ip -d link show dev "$TUN_DEV" | grep -o 'master [^ ]*' | awk '{print $2}' || true)
 if [ "$CURRENT_TUN_MASTER" != "$VRF_NAME" ]; then
     ip link set dev "$TUN_DEV" master "$VRF_NAME"
@@ -285,7 +291,28 @@ fi
 ip addr add "$TUN_IP" dev "$TUN_DEV" 2>/dev/null || true
 ip link set dev "$TUN_DEV" up
 
+# 默认公网流量路由至 TUN 隧道设备
 ip route replace default dev "$TUN_DEV" table "$TABLE_ID"
+
+# VRF 域内本地回环路由：local 127.0.0.0/8 指向 VRF 设备自身。内核 VRF 驱动对该路由的出向包
+# 执行 vrf_local_xmit 环回（保留 skb_dst 与 l3mdev 上下文重新入栈），使域内 connect 127.0.0.1
+# 与默认域监听者（docker-proxy、本机服务等）双向互通；域内自监听的端口由 socket l3mdev 评分
+# 天然优先命中，无需任何端口劫持或转发进程。
+ip route replace local 127.0.0.0/8 dev "$VRF_NAME" table "$TABLE_ID"
+
+# 11. 放行 VRF 域内环回包重新入栈的路径
+# Docker 会为发布端口注入 raw 表规则 "-d 127.0.0.1 ! -i lo --dport X -j DROP" 与 nat 表 DNAT，
+# 仅豁免 iif=loopback0（主会话镜像桥路径）。域内环回包经 VRF 设备重新进栈（iif=$VRF_NAME）
+# 需要显式放行，并跳过 DNAT：DNAT 转发到容器的回程包无法回到域内客户端，发布端口必须像
+# 主会话一样经 docker-proxy 用户态中继完成对接。
+if command -v iptables >/dev/null 2>&1; then
+    iptables -t raw -C PREROUTING -i "$VRF_NAME" -d 127.0.0.0/8 -j ACCEPT 2>/dev/null || \
+        iptables -t raw -I PREROUTING 1 -i "$VRF_NAME" -d 127.0.0.0/8 -j ACCEPT
+    iptables -t nat -C PREROUTING -i "$VRF_NAME" -d 127.0.0.0/8 -j ACCEPT 2>/dev/null || \
+        iptables -t nat -I PREROUTING 1 -i "$VRF_NAME" -d 127.0.0.0/8 -j ACCEPT
+else
+    echo "[WARN] 未检测到 iptables：Docker 发布端口的域内直连可能被其 raw 表规则拦截" >&2
+fi
 
 # 12. 配置受保护的运行时独立 DNS
 mkdir -p "$RUN_DIR"
@@ -299,7 +326,7 @@ echo "=================================================="
 echo " WSL-Tunnel 已就绪"
 echo " 实例名称: $INSTANCE_NAME (Table: $TABLE_ID)"
 echo " 代理后端: $PROXY_URL"
-echo " 本地回环: 127.0.0.1 ($LO_DEV)"
+echo " 本地回环: 127.0.0.1 (VRF 设备环回, 宿主服务直通)"
 echo " 用户身份: $TARGET_USER ($TARGET_SHELL)"
 echo "=================================================="
 

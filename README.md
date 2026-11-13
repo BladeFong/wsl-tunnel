@@ -21,7 +21,7 @@
 3. **动态链接劫持 (`LD_PRELOAD`) 失效**：`proxychains` 等工具基于 glibc 动态挂钩，对静态编译、直接发起 Linux 系统调用（Syscall）的程序（如 Go 编译产物）完全不起作用。
 4. **WSL2 镜像网络的特有痛点**：在 Windows 11 WSL2 镜像模式（`networkingMode=mirrored`）下，宿主机代理软件容易造成 Fake-IP 污染与内网网关冲突；更严重的是，Linux 内核默认不允许将物理 `lo` 接口加入 VRF，导致各类开发者工具在绑定本地随机端口（`127.0.0.1:0`）时频频抛出 `cannot assign requested address`。
 
-本项目完全基于 Linux 内核原生网络原语（TUN、VRF/l3mdev、Dummy 虚拟回环、Mount Namespace），在操作系统内部开辟专属的三层路由域：**会话内所有命令与子进程全量透明分流，系统全局网络与宿主机物理连接则保持零干扰。**
+本项目完全基于 Linux 内核原生网络原语（TUN、VRF/l3mdev、VRF 设备环回、Mount Namespace），在操作系统内部开辟专属的三层路由域：**会话内所有命令与子进程全量透明分流，系统全局网络与宿主机物理连接则保持零干扰。**
 
 ---
 
@@ -35,7 +35,7 @@ Linux 挂载命名空间 (unshare -m --propagation slave) ──> 独立挂载�
       │
 Linux VRF 路由域 (l3mdev) ────────────> 隔离 FIB 路由表 (Table ID)
       │                                   │
-      ├─ 专属 dummy 网卡 (lo-<name>) ──────┴─> 分配 127.0.0.1/8 (解决本地 IPC / 服务端口监听)
+      ├─ VRF 设备环回 (vrf_local_xmit) ─────┴─> local 127.0.0.0/8 (双向互通宿主服务与 Docker 容器映射)
       │
       └─ 原生 TUN 设备 (tun-<name>)
             │ (标准三层原始 IP 数据包，无 ARP 依赖)
@@ -48,8 +48,12 @@ Linux VRF 路由域 (l3mdev) ────────────> 隔离 FIB �
 
 1. **原生三层隧道**：在 Linux 内部启动原生 `tun2socks` 守护进程，接管 `/dev/net/tun` 设备，以用户态 TCP/IP 栈透明接管全量 IP 数据包。
 2. **会话级路由隔离**：利用内核 VRF（虚拟路由转发）与 cgroups-bpf，仅将当前终端所属进程树绑定至指定 FIB 路由表，不修改系统全局主路由表。
-3. **本地回环补齐**：通过 `dummy` 驱动为 VRF 动态创建虚拟回环设备并绑定 `127.0.0.1/8`，搭配 `net.ipv4.tcp_l3mdev_accept=1`，确保本地授权回调与服务监听完全正常。
+3. **本地回环双向互通（VRF 设备环回）**：在实例路由表内注入指向 VRF 设备自身的 `local 127.0.0.0/8` 路由，由内核 VRF 驱动的 `vrf_local_xmit` 环回机制在保留 `skb_dst` 与 l3mdev 上下文的前提下将环回包重新送回本机协议栈，搭配 `net.ipv4.tcp_l3mdev_accept=1`，实现会话内 `connect 127.0.0.1:<port>` 与默认命名空间监听者（`docker-proxy`、本机服务等）的**双向**互通。配套两项加固：将 l3mdev 策略规则前移至优先级 0（避免被 WSL2 镜像模式注入的优先级 1 环回劫持规则 `ipproto tcp/udp lookup 127` 截胡，且对不携带 l3mdev 上下文的主会话流量零影响）；为 Docker 发布端口注入的 raw 表 DROP 与 nat 表 DNAT 规则添加 `iif vrf-<name>` 豁免（域内环回包经 VRF 设备重新进栈时需显式放行并跳过 DNAT，发布端口与主会话一致地由 `docker-proxy` 用户态中继对接）。
 4. **DNS 隔离与单向从属挂载**：使用 `unshare -m --propagation slave` 局部挂载专属 `resolv.conf`，既彻底规避宿主 Fake-IP 干扰，又允许外部磁盘或新设备的挂载单向自动同步进入会话。
+
+> [!NOTE]
+> **回环端口语义与空间权衡（Trade-off）**：
+> 会话内对 `127.0.0.1:<port>` 的连接优先命中**域内监听者**（内核按 socket 的 l3mdev 绑定评分天然优先），无域内监听时透明直达默认命名空间的同端口服务，端口语义与 Docker `-p` 发布声明完全一致：无偏移、无需任何代理规则或逃逸命令。相应的权衡在于：bind 冲突检查作用于整个网络命名空间，若会话内监听的端口与宿主机已存在的监听服务相同，将收到 `EADDRINUSE`（`Address already in use`）。对于开发与测试终端场景，这是保证容器服务与本地工具畅通互连的最优解。
 
 ---
 
@@ -61,14 +65,15 @@ Linux VRF 路由域 (l3mdev) ────────────> 隔离 FIB �
 | **Go / Rust 静态编译支持** | 部分忽略 / 行为不一 | 支持 | **完全不支持** | **完整支持（内核三层接管）** |
 | **UDP 与 DNS 处理** | 不支持 | 支持 | 仅限特定 Hook | **支持（独立 DNS 挂载）** |
 | **系统网络干扰** | 无 | **高（整机路由篡改）** | 无 | **无（系统全局无感）** |
-| **本地服务 (127.0.0.1) 监听** | 正常 | 视规则而定 | 正常 | **正常（内置专属 dummy 回环）** |
+| **本地服务 (127.0.0.1) 访问与监听** | 正常 | 视规则而定 | 正常 | **正常（VRF 环回双向互通，域内监听优先）** |
 | **多环境并发隔离** | 繁琐易冲突 | 无法并发 | 复杂 | **支持（多终端运行不同节点）** |
 
 ---
 
 ## 依赖条件
 
-* **现代 Linux 系统**：内核支持 VRF（`CONFIG_NET_VRF`）、dummy 模块以及 TUN 驱动（如 Ubuntu 22.04/24.04、Debian 12+、Arch Linux 等）。
+* **现代 Linux 系统**：内核支持 VRF（`CONFIG_NET_VRF`）以及 TUN 驱动（如 Ubuntu 22.04/24.04、Debian 12+、Arch Linux 等）。
+* **iptables**：用于放行域内环回包绕过 Docker 发布端口的 raw/nat 规则；无 Docker 的环境中缺失时仅影响该场景（脚本会给出警告）。
 * **若运行于 Windows WSL2**：Windows 11，已启用 WSL2 并在 `%USERPROFILE%\.wslconfig` 中配置 `networkingMode=mirrored`。
 * **代理服务端点**：局域网或本机可访问的 SOCKS5 服务（如 Clash、v2rayA、OpenWrt 旁路由等）。
 * **可执行文件**：从 [xjasonlyu/tun2socks/releases](https://github.com/xjasonlyu/tun2socks/releases) 下载 Linux amd64 版本的 `tun2socks`。
@@ -141,7 +146,7 @@ sudo /usr/local/bin/wsl-tunnel.sh -n clash --stop
 | `-h, --help` | 显示帮助信息并退出 | - |
 
 > [!NOTE]
-> **网络接口命名长度说明**：Linux 内核对网络接口名称有 15 个字符的硬性上限（`IFNAMSIZ`）。脚本内部会为实例分别创建 `vrf-<name>`、`tun-<name>` 和 `lo-<name>` 虚拟设备，因此 `-n / --name` 参数传入的实例名称**请保持在 11 个字符以内**（仅使用字母、数字、下划线或短横线），避免触发内核接口名超长错误。
+> **网络接口命名长度说明**：Linux 内核对网络接口名称有 15 个字符的硬性上限（`IFNAMSIZ`）。脚本内部会为实例分别创建 `vrf-<name>` 与 `tun-<name>` 虚拟设备，因此 `-n / --name` 参数传入的实例名称**请保持在 11 个字符以内**（仅使用字母、数字、下划线或短横线），避免触发内核接口名超长错误。
 
 ---
 
