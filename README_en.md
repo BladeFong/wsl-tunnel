@@ -48,7 +48,7 @@ Linux VRF Domain (l3mdev) ────────────> Dedicated FIB ta
 
 1. **Pure L3 Tunneling**: Launches a native `tun2socks` daemon attached to `/dev/net/tun`, processing raw IP packets via a user-space TCP/IP stack.
 2. **Per-Session VRF Isolation**: Associates the current shell process tree with a dedicated Virtual Routing and Forwarding table via `cgroups-bpf`, leaving the system's global routing table intact.
-3. **Direct Host & Docker Service Access**: `127.0.0.1:<port>` from the session preferentially reaches in-session listeners, and otherwise transparently reaches the same port on the host — local services and Docker published ports (e.g. `3003`, `5432`) alike — exactly matching `-p` declarations with zero offset, no proxy rules, no escape commands.
+3. **Direct Host & Docker Service Access**: `127.0.0.1:<port>` from the session preferentially reaches in-session listeners, and otherwise transparently reaches the same port on the host — local services and Docker published ports (e.g. `3003`, `5432`) alike — exactly matching `-p` declarations with zero offset, no proxy rules, no escape commands; adding, removing, or restarting containers and ports requires no script re-run.
 4. **DNS Isolation with Slave Propagation**: Uses `unshare -m --propagation slave` to bind-mount a clean `/etc/resolv.conf`, eliminating host Fake-IP interference while allowing dynamically attached host disks or hot-plugged devices to propagate into the session automatically.
 5. **GUI Application Compatibility**: Passes through the WSLg desktop session environment so GUI applications like Edge run directly inside the tunnel terminal, with working audio output.
 
@@ -72,7 +72,6 @@ Linux VRF Domain (l3mdev) ────────────> Dedicated FIB ta
 
 ## Known Limitations
 
-* **Rule rebuild after Docker restarts**: The Docker daemon or container restarts re-insert its raw/nat rules; if they land ahead of ours and break in-session access to published ports, **simply re-run this script to restore** (idempotent, takes seconds).
 * **Plaintext DNS may be poisoned**: Session DNS uses plaintext UDP 53 (`1.1.1.1` / `8.8.8.8`). If the proxy side egresses that UDP directly (not through the proxy node), in-country networks can inject forged answers for sensitive domains — symptoms include "sometimes works, sometimes not" and non-official resolved IPs. Prefer routing DNS UDP through the proxy node, or enable encrypted DNS (DoH) on the client.
 
 ---
