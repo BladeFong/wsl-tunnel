@@ -136,6 +136,29 @@ Launching this profile opens a dedicated tab routed transparently through the pr
 
 If a script named `pre-start.sh` exists in the same directory as `wsl-tunnel.sh`, it will be executed automatically before initializing network interfaces. This allows custom environment preparation (e.g., waking up external disks or mounting network shares) without modifying core script logic.
 
+### 5. Remote IDE Server Tunnel Injection (server-patch)
+
+When connecting to WSL from Windows desktop IDEs via Remote extensions (e.g., Antigravity IDE, VS Code), backend server processes are spawned by Windows through `wsl.exe` in the default global network namespace, bypassing in-terminal tunnels.
+
+The `server-patch/` directory provides a modular wrapper suite that injects kernel VRF cgroup auto-joining and proxy environment variables into remote server daemons, transparently routing remote AI coding, model inference, and integrated terminals through the tunnel:
+
+```bash
+cd ~/wsl-tunnel/server-patch
+
+# 1. Install dynamic wrapper for a client (e.g. Antigravity, with interactive endpoint selection)
+./patch-agy.sh
+
+# 2. Switch the global proxy endpoint at any time (all patched clients follow automatically on next launch)
+./switch.sh                      # Interactive menu selection or adding new endpoints
+./switch.sh 192.168.1.253:7890   # Direct CLI assignment
+
+# 3. Check patch status
+./patch-agy.sh --status
+
+# 4. Losslessly restore official original binaries
+./patch-agy.sh --restore
+```
+
 ---
 
 ## CLI Options

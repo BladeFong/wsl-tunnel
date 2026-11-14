@@ -14,6 +14,8 @@ Thumbs.db
 # Documentation & Review reports
 docs/
 
-# Local custom hooks
+# Local custom hooks & caches
 pre-start.sh
+*.cache
+current_endpoint
 

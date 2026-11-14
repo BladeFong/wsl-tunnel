@@ -136,6 +136,29 @@ sudo /usr/local/bin/wsl-tunnel.sh -n clash --stop
 
 若在 `wsl-tunnel.sh` 同级目录下存在 `pre-start.sh`，脚本将在初始化网络前自动调用执行。适用于个性化环境准备（如提前唤醒外部磁盘、挂载网络存储等），彻底与核心脚本解耦。
 
+### 5. 远程 IDE 服务端隧道注入 (server-patch)
+
+当从 Windows 桌面使用 Remote 扩展（如 Antigravity IDE、VS Code 等）连接 WSL 时，服务端进程通常由 Windows 侧通过 `wsl.exe` 在默认全局网络空间中拉起，脱离了手动开启的终端会话。
+
+本项目在 `server-patch/` 目录下提供了模块化包装补丁套件，能够为远程服务端注入内核 VRF cgroup 自动加入与代理环境变量，使远程 AI 编码、模型推理与内置终端全量透明走隧道出海：
+
+```bash
+cd ~/wsl-tunnel/server-patch
+
+# 1. 为指定客户端安装动态包装器（以 Antigravity 为例，支持交互选择端点）
+./patch-agy.sh
+
+# 2. 随时切换全局代理端点（所有已打补丁的客户端下次启动自动生效）
+./switch.sh                      # 交互式菜单选择或录入新端点
+./switch.sh 192.168.1.253:7890   # 命令行直接指定
+
+# 3. 查看补丁状态
+./patch-agy.sh --status
+
+# 4. 一键无损还原官方原版二进制
+./patch-agy.sh --restore
+```
+
 ---
 
 ## 命令行参数一览
