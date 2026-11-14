@@ -276,7 +276,8 @@ sysctl -w net.ipv4.tcp_l3mdev_accept=1 >/dev/null 2>&1 || true
 sysctl -w net.ipv4.udp_l3mdev_accept=1 >/dev/null 2>&1 || true
 
 # 会话内禁用 IPv6（设备级 sysctl，仅作用于本实例的 VRF/TUN 设备）：本方案为纯 IPv4
-# 隧道，域内关闭 IPv6 可让应用直接回落 IPv4，避免 ::1 / AAAA 目标产生不确定行为；
+# 隧道，域内 v6 路由本就为空，此设置将其显式固定，避免基础环境变化（如镜像模式
+# 同步 Windows 的全局 v6 地址）后域内出现不可用的 IPv6 半连通状态；
 # 主会话与其他实例不受影响，--stop 删除设备后对应 sysctl 项随之消失。
 sysctl -w "net.ipv6.conf.$VRF_NAME.disable_ipv6=1" >/dev/null 2>&1 || true
 sysctl -w "net.ipv6.conf.$TUN_DEV.disable_ipv6=1" >/dev/null 2>&1 || true
