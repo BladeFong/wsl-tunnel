@@ -157,6 +157,9 @@ cd ~/wsl-tunnel/server-patch
 
 # 4. Losslessly restore official original binaries
 ./patch-agy.sh --restore
+
+# 5. Safely clean up deprecated legacy server versions (preserves active version, frees disk space)
+./patch-agy.sh --clean
 ```
 
 ---

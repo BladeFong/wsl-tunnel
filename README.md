@@ -157,6 +157,9 @@ cd ~/wsl-tunnel/server-patch
 
 # 4. 一键无损还原官方原版二进制
 ./patch-agy.sh --restore
+
+# 5. 安全清理废弃的历史旧版本（自动识别并保留活跃版本，释放磁盘空间）
+./patch-agy.sh --clean
 ```
 
 ---
