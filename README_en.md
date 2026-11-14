@@ -72,11 +72,8 @@ Linux VRF Domain (l3mdev) ────────────> Dedicated FIB ta
 
 ## Known Limitations
 
-* **Proxy-side domain-based rules do not apply (inherent to tun2socks)**: Traffic from the session is handed to the SOCKS5 endpoint with **bare IP destinations**; domain-based routing rules on the proxy side (e.g. Clash `DOMAIN-SUFFIX` / `GEOSITE`) never match, so affected sites may land on the fallback node. Cover them with `IP-CIDR` rules or ensure the fallback group points at a working node. Browser-type applications usually carry their own DoH / fallback paths and are generally unaffected.
 * **Rule rebuild after Docker restarts**: The Docker daemon or container restarts re-insert its raw/nat rules; if they land ahead of ours and break in-session access to published ports, **simply re-run this script to restore** (idempotent, takes seconds).
 * **Plaintext DNS may be poisoned**: Session DNS uses plaintext UDP 53 (`1.1.1.1` / `8.8.8.8`). If the proxy side egresses that UDP directly (not through the proxy node), in-country networks can inject forged answers for sensitive domains — symptoms include "sometimes works, sometimes not" and non-official resolved IPs. Prefer routing DNS UDP through the proxy node, or enable encrypted DNS (DoH) on the client.
-* **IPv6 loopback not covered**: The loopback interconnect targets IPv4 `127.0.0.0/8`; `::1` is out of scope.
-* **In-domain port binding conflicts**: Listening on a port already used by a host service yields `EADDRINUSE`; see the trade-off note above.
 
 ---
 

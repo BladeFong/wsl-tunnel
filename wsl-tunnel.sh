@@ -275,6 +275,12 @@ ip link set dev "$VRF_NAME" up
 sysctl -w net.ipv4.tcp_l3mdev_accept=1 >/dev/null 2>&1 || true
 sysctl -w net.ipv4.udp_l3mdev_accept=1 >/dev/null 2>&1 || true
 
+# 会话内禁用 IPv6（设备级 sysctl，仅作用于本实例的 VRF/TUN 设备）：本方案为纯 IPv4
+# 隧道，域内关闭 IPv6 可让应用直接回落 IPv4，避免 ::1 / AAAA 目标产生不确定行为；
+# 主会话与其他实例不受影响，--stop 删除设备后对应 sysctl 项随之消失。
+sysctl -w "net.ipv6.conf.$VRF_NAME.disable_ipv6=1" >/dev/null 2>&1 || true
+sysctl -w "net.ipv6.conf.$TUN_DEV.disable_ipv6=1" >/dev/null 2>&1 || true
+
 # l3mdev 策略规则前移至优先级 0。WSL2 镜像模式会在优先级 1 注入 "ipproto tcp/udp lookup 127"
 # 全局规则（table 127 经 loopback0 中转 Windows 镜像回环桥），会抢先劫持 VRF 域内对 127.0.0.1
 # 的路由查找；VRF 驱动对本域出向包的二次查表也仅携带 l3mdev 上下文。前移后域内流量可率先命中
