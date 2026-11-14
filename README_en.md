@@ -72,7 +72,7 @@ Linux VRF Domain (l3mdev) ────────────> Dedicated FIB ta
 
 ## Known Limitations
 
-* **Plaintext DNS may be poisoned**: Session DNS uses plaintext UDP 53 (`1.1.1.1` / `8.8.8.8`). If the proxy side egresses that UDP directly (not through the proxy node), in-country networks can inject forged answers for sensitive domains — symptoms include "sometimes works, sometimes not" and non-official resolved IPs. Prefer routing DNS UDP through the proxy node, or enable encrypted DNS (DoH) on the client.
+* **Plaintext DNS may be poisoned**: Session DNS uses plaintext UDP 53 (`1.1.1.1` / `8.8.8.8`). If the proxy side egresses that UDP directly (not through the proxy node), in-country networks can inject forged answers for sensitive domains — symptoms include "sometimes works, sometimes not" and non-official resolved IPs. Prefer routing DNS UDP through the proxy node (e.g. adding a `DST-PORT,53,PROXY` rule), enabling encrypted DNS (DoH) on the client, or substituting `tun2socks` with a minimal `sing-box` binary (also powered by gVisor) featuring built-in Fake-IP to eliminate plaintext queries entirely.
 
 ---
 
