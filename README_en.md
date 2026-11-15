@@ -73,6 +73,7 @@ Linux VRF Domain (l3mdev) ────────────> Dedicated FIB ta
 ## Known Limitations
 
 * **Plaintext DNS may be poisoned**: Session DNS uses plaintext UDP 53 (`1.1.1.1` / `8.8.8.8`). If the proxy side egresses that UDP directly (not through the proxy node), in-country networks can inject forged answers for sensitive domains — symptoms include "sometimes works, sometimes not" and non-official resolved IPs. Prefer routing DNS UDP through the proxy node (e.g. adding a `DST-PORT,53,PROXY` rule), enabling encrypted DNS (DoH) on the client, or substituting `tun2socks` with a minimal `sing-box` binary (also powered by gVisor) featuring built-in Fake-IP to eliminate plaintext queries entirely.
+* **In Windows WSL2, tunnel instances targeting host local ports (`127.0.0.1:<port>`) on mobile/laptop devices strongly require Mirrored Mode**: WSL2's default NAT mode cannot directly access the Windows host's `127.0.0.1`, forcing the use of dynamic host adapter IPs. On laptops where networks shift frequently (changing Wi-Fi, mobile hotspots, sleep/wake cycles), host IPs break constantly and encounter Windows Firewall blocks on public network profiles. Configuring `networkingMode=mirrored` keeps `127.0.0.1` permanently routed to the Windows host, unaffected by physical network changes.
 
 ---
 

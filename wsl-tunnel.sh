@@ -113,7 +113,18 @@ if [ "$(id -u)" -ne 0 ]; then
     exit 1
 fi
 
-# 4. 执行同级目录可选前置钩子脚本 (Pre-start Hook)
+# 4. 运行环境特征探测 (WSL / WSL 镜像网络 / 原生 Linux)
+IS_WSL=false
+if [ -n "${WSL_DISTRO_NAME:-}" ] || [ -n "${WSL_INTEROP:-}" ] || grep -qi microsoft /proc/version 2>/dev/null; then
+    IS_WSL=true
+fi
+
+IS_WSL_MIRRORED=false
+if [ "$IS_WSL" = true ] && (ip link show loopback0 >/dev/null 2>&1 || ip rule show | grep -q "lookup 127"); then
+    IS_WSL_MIRRORED=true
+fi
+
+# 5. 执行同级目录可选前置钩子脚本 (Pre-start Hook)
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PRE_HOOK="$SCRIPT_DIR/pre-start.sh"
 if [ -x "$PRE_HOOK" ]; then
@@ -122,7 +133,7 @@ elif [ -f "$PRE_HOOK" ]; then
     bash "$PRE_HOOK" || true
 fi
 
-# 5. 计算路由表 ID 与接口命名
+# 6. 计算路由表 ID 与接口命名
 if [ -n "$CUSTOM_TABLE" ]; then
     TABLE_ID="$CUSTOM_TABLE"
 else
@@ -136,7 +147,7 @@ TUN_DEV="tun-${INSTANCE_NAME}"
 TUN_IP="172.29.$((TABLE_ID % 250)).1/30"
 RUN_DIR="/run/wsl-tunnel/${INSTANCE_NAME}"
 
-# 4. 如果是停止模式 (--stop / --down)
+# 7. 如果是停止模式 (--stop / --down)
 if [ "$STOP_MODE" = true ]; then
     echo "[*] 正在停止 WSL-Tunnel 实例 [$INSTANCE_NAME]..."
     
@@ -157,9 +168,11 @@ if [ "$STOP_MODE" = true ]; then
         iptables -t nat -D PREROUTING -i "$VRF_NAME" -d 127.0.0.0/8 -j ACCEPT 2>/dev/null || true
     fi
 
-    # 最后一个 VRF 实例关停时，回收前移的 l3mdev 策略规则 (多实例并存时保留)
+    # 最后一个 VRF 实例关停时，若存在前移的 l3mdev pref 0 规则则予以回收
     if ! ip -o link show type vrf 2>/dev/null | grep -q .; then
-        ip rule del pref 0 l3mdev 2>/dev/null || true
+        if ip rule show | awk '$1 == "0:"' | grep -q "l3mdev"; then
+            ip rule del pref 0 l3mdev 2>/dev/null || true
+        fi
     fi
 
     # 清理运行时 DNS 配置
@@ -170,7 +183,7 @@ if [ "$STOP_MODE" = true ]; then
     exit 0
 fi
 
-# 5. 识别降权目标用户
+# 8. 识别降权目标用户
 TARGET_USER=""
 if [ -n "$CUSTOM_USER" ]; then
     TARGET_USER="$CUSTOM_USER"
@@ -207,7 +220,7 @@ if [ -z "$TARGET_SHELL" ] || [ ! -x "$TARGET_SHELL" ]; then
     TARGET_SHELL="/bin/bash"
 fi
 
-# 6. 查找 tun2socks 可执行文件
+# 9. 查找 tun2socks 可执行文件
 T2S_BIN=""
 if [ -n "$CUSTOM_BIN" ] && [ -x "$CUSTOM_BIN" ]; then
     T2S_BIN="$CUSTOM_BIN"
@@ -229,7 +242,7 @@ if [ -z "$T2S_BIN" ]; then
     exit 1
 fi
 
-# 7. 提取代理 Host 并自动识别出接口
+# 10. 提取代理 Host 并自动识别出接口
 EXTRA_OPTS=()
 temp="${PROXY_URL#*://}"
 temp="${temp#*@}"             # 剥离用户名/密码
@@ -242,7 +255,7 @@ if [ -n "$PROXY_HOST" ] && [ "$PROXY_HOST" != "127.0.0.1" ] && [ "$PROXY_HOST" !
     fi
 fi
 
-# 8. 启动并复用 tun2socks 守护进程
+# 11. 启动并复用 tun2socks 守护进程
 LOG_FILE="/tmp/tun2socks-${INSTANCE_NAME}.log"
 if ! pgrep -f "tun2socks.*${TUN_DEV}" >/dev/null 2>&1; then
     echo "[+] 启动 Linux 原生 tun2socks 隧道守护进程 [$INSTANCE_NAME -> $PROXY_URL]..."
@@ -266,7 +279,7 @@ if ! ip link show dev "$TUN_DEV" >/dev/null 2>&1; then
     exit 1
 fi
 
-# 9. 配置 VRF 隔离域与内核参数
+# 12. 配置 VRF 隔离域与内核参数
 if ! ip link show "$VRF_NAME" >/dev/null 2>&1; then
     ip link add "$VRF_NAME" type vrf table "$TABLE_ID"
 fi
@@ -282,15 +295,18 @@ sysctl -w net.ipv4.udp_l3mdev_accept=1 >/dev/null 2>&1 || true
 sysctl -w "net.ipv6.conf.$VRF_NAME.disable_ipv6=1" >/dev/null 2>&1 || true
 sysctl -w "net.ipv6.conf.$TUN_DEV.disable_ipv6=1" >/dev/null 2>&1 || true
 
-# l3mdev 策略规则前移至优先级 0。WSL2 镜像模式会在优先级 1 注入 "ipproto tcp/udp lookup 127"
+# l3mdev 策略规则前移至优先级 0：
+# 仅在 WSL2 镜像网络模式下启用。WSL2 镜像模式会在优先级 1 注入 "ipproto tcp/udp lookup 127"
 # 全局规则（table 127 经 loopback0 中转 Windows 镜像回环桥），会抢先劫持 VRF 域内对 127.0.0.1
 # 的路由查找；VRF 驱动对本域出向包的二次查表也仅携带 l3mdev 上下文。前移后域内流量可率先命中
-# 实例路由表，且不携带 l3mdev 上下文的主会话流量完全不匹配本规则（零干扰）。
-if ! ip rule show | awk '$1 == "0:"' | grep -q "l3mdev"; then
-    ip rule add l3mdev pref 0
+# 实例路由表。原生 Linux 或 WSL NAT 模式无此劫持规则，保持内核默认 pref 1000 即可。
+if [ "$IS_WSL_MIRRORED" = true ]; then
+    if ! ip rule show | awk '$1 == "0:"' | grep -q "l3mdev"; then
+        ip rule add l3mdev pref 0
+    fi
 fi
 
-# 10. 将 TUN 网卡加入 VRF 并配置默认路由与本地回环路由
+# 13. 将 TUN 网卡加入 VRF 并配置默认路由与本地回环路由
 CURRENT_TUN_MASTER=$(ip -d link show dev "$TUN_DEV" | grep -o 'master [^ ]*' | awk '{print $2}' || true)
 if [ "$CURRENT_TUN_MASTER" != "$VRF_NAME" ]; then
     ip link set dev "$TUN_DEV" master "$VRF_NAME"
@@ -307,7 +323,7 @@ ip route replace default dev "$TUN_DEV" table "$TABLE_ID"
 # 天然优先命中，无需任何端口劫持或转发进程。
 ip route replace local 127.0.0.0/8 dev "$VRF_NAME" table "$TABLE_ID"
 
-# 11. 放行 VRF 域内环回包重新入栈的路径
+# 14. 放行 VRF 域内环回包重新入栈的路径
 # Docker 会为发布端口注入 raw 表规则 "-d 127.0.0.1 ! -i lo --dport X -j DROP" 与 nat 表 DNAT，
 # 仅豁免 iif=loopback0（主会话镜像桥路径）。域内环回包经 VRF 设备重新进栈（iif=$VRF_NAME）
 # 需要显式放行，并跳过 DNAT：DNAT 转发到容器的回程包无法回到域内客户端，发布端口必须像
@@ -321,7 +337,7 @@ else
     echo "[WARN] 未检测到 iptables：Docker 发布端口的域内直连可能被其 raw 表规则拦截" >&2
 fi
 
-# 12. 配置受保护的运行时独立 DNS
+# 15. 配置受保护的运行时独立 DNS
 mkdir -p "$RUN_DIR"
 chmod 700 "$RUN_DIR"
 cat << EOF_DNS > "$RUN_DIR/resolv.conf"
@@ -334,36 +350,70 @@ echo " WSL-Tunnel 已就绪"
 echo " 实例名称: $INSTANCE_NAME (Table: $TABLE_ID)"
 echo " 代理后端: $PROXY_URL"
 echo " 本地回环: 127.0.0.1 (VRF 设备环回, 宿主服务直通)"
+if [ "$IS_WSL" = true ]; then
+    echo " 运行环境: WSL ($([ "$IS_WSL_MIRRORED" = true ] && echo "Mirrored" || echo "NAT"))"
+else
+    echo " 运行环境: Native Linux"
+fi
 echo " 用户身份: $TARGET_USER ($TARGET_SHELL)"
 echo "=================================================="
 
-# 14. 单向从属 Mount Namespace 隔离 DNS 并降权进入 VRF 交互终端
-# GUI/桌面会话变量说明：WSLg 环境下 XDG_RUNTIME_DIR 与 DBUS_SESSION_BUS_ADDRESS 是
-# uid 特异路径（root 启动方携带的是 /run/user/0，不可透传），必须按目标用户派生；
-# WAYLAND_DISPLAY / DISPLAY / PULSE_SERVER 等非 uid 变量继承启动方取值并提供 WSLg 默认值。
-exec unshare -m --propagation slave bash -c "
+# 16. 确保目标用户 XDG 运行时目录存在
+# 当 WSL 或原生 Linux 冷启动且首个终端直接以 root 执行本脚本拉起时，未经历 PAM 登录流程，
+# systemd-logind 尚未挂载 /run/user/$TARGET_UID。若目标目录缺失，会导致 fnm / tmux / GUI
+# 等依赖 XDG_RUNTIME_DIR 的工具报 No such file or directory (os error 2)。
+if [ ! -d "/run/user/$TARGET_UID" ]; then
+    if [ -d /run/systemd/system ] && command -v systemctl >/dev/null 2>&1; then
+        systemctl start "user-runtime-dir@$TARGET_UID.service" >/dev/null 2>&1 || true
+    fi
+    # 兜底：若非 systemd 环境或服务启动失败，直接按 XDG 规范补齐目录与权限
+    if [ ! -d "/run/user/$TARGET_UID" ] && [ -d /run ]; then
+        mkdir -p "/run/user/$TARGET_UID"
+        chown "$TARGET_UID:$TARGET_GID" "/run/user/$TARGET_UID"
+        chmod 700 "/run/user/$TARGET_UID"
+    fi
+fi
+
+# 17. 单向从属 Mount Namespace 隔离 DNS 并降权进入 VRF 交互终端
+# 环境变量分流装配：
+# - 通用基础变量：HOME, USER, LOGNAME, SHELL, TERM, LANG, PATH, XDG_RUNTIME_DIR, DBUS 等
+# - WSL 专属变量：WSL_INTEROP, WSL_DISTRO_NAME, 及 WSLg 默认图形/音频路径（仅在 WSL 环境注入）
+# - 原生 Linux：仅透明继承宿主已有的 DISPLAY, WAYLAND_DISPLAY, PULSE_SERVER，绝不盲目伪造 WSLg 路径
+ENV_ARGS=(
+    "HOME=$TARGET_HOME"
+    "USER=$TARGET_USER"
+    "LOGNAME=$TARGET_USER"
+    "SHELL=$TARGET_SHELL"
+    "TERM=${TERM:-xterm-256color}"
+    "COLORTERM=${COLORTERM:-}"
+    "LANG=${LANG:-C.UTF-8}"
+    "LC_ALL=${LC_ALL:-}"
+    "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:$TARGET_HOME/.local/bin"
+    "XDG_RUNTIME_DIR=/run/user/$TARGET_UID"
+    "XDG_DATA_DIRS=${XDG_DATA_DIRS:-/usr/local/share:/usr/share}"
+    "DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/$TARGET_UID/bus"
+)
+
+if [ "$IS_WSL" = true ]; then
+    ENV_ARGS+=(
+        "WSL_INTEROP=${WSL_INTEROP:-}"
+        "WSL_DISTRO_NAME=${WSL_DISTRO_NAME:-}"
+        "DISPLAY=${DISPLAY:-:0}"
+        "WAYLAND_DISPLAY=${WAYLAND_DISPLAY:-wayland-0}"
+        "PULSE_SERVER=${PULSE_SERVER:-unix:/mnt/wslg/PulseServer}"
+    )
+else
+    [ -n "${DISPLAY:-}" ] && ENV_ARGS+=("DISPLAY=$DISPLAY")
+    [ -n "${WAYLAND_DISPLAY:-}" ] && ENV_ARGS+=("WAYLAND_DISPLAY=$WAYLAND_DISPLAY")
+    [ -n "${PULSE_SERVER:-}" ] && ENV_ARGS+=("PULSE_SERVER=$PULSE_SERVER")
+fi
+
+exec unshare -m --propagation slave bash -c '
     mount --make-rslave / 2>/dev/null || true
-    mount --bind '$RUN_DIR/resolv.conf' /etc/resolv.conf
-    cd '$TARGET_HOME'
-    exec ip vrf exec '$VRF_NAME' setpriv \
-        --reuid='$TARGET_UID' --regid='$TARGET_GID' --init-groups \
-        env -i \
-        HOME='$TARGET_HOME' \
-        USER='$TARGET_USER' \
-        LOGNAME='$TARGET_USER' \
-        SHELL='$TARGET_SHELL' \
-        TERM='${TERM:-xterm-256color}' \
-        COLORTERM='${COLORTERM:-}' \
-        LANG='${LANG:-C.UTF-8}' \
-        LC_ALL='${LC_ALL:-}' \
-        PATH='/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:$TARGET_HOME/.local/bin' \
-        WSL_INTEROP='${WSL_INTEROP:-}' \
-        WSL_DISTRO_NAME='${WSL_DISTRO_NAME:-}' \
-        DISPLAY='${DISPLAY:-:0}' \
-        WAYLAND_DISPLAY='${WAYLAND_DISPLAY:-wayland-0}' \
-        XDG_RUNTIME_DIR='/run/user/$TARGET_UID' \
-        XDG_DATA_DIRS='${XDG_DATA_DIRS:-/usr/local/share:/usr/share}' \
-        DBUS_SESSION_BUS_ADDRESS='unix:path=/run/user/$TARGET_UID/bus' \
-        PULSE_SERVER='${PULSE_SERVER:-unix:/mnt/wslg/PulseServer}' \
-        '$TARGET_SHELL' -l
-"
+    mount --bind "$1" /etc/resolv.conf
+    cd "$2"
+    exec ip vrf exec "$3" setpriv \
+        --reuid="$4" --regid="$5" --init-groups \
+        env -i "${@:7}" \
+        "$6" -l
+' _ "$RUN_DIR/resolv.conf" "$TARGET_HOME" "$VRF_NAME" "$TARGET_UID" "$TARGET_GID" "$TARGET_SHELL" "${ENV_ARGS[@]}"
