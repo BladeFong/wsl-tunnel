@@ -147,10 +147,8 @@ TUN_DEV="tun-${INSTANCE_NAME}"
 TUN_IP="172.29.$((TABLE_ID % 250)).1/30"
 RUN_DIR="/run/wsl-tunnel/${INSTANCE_NAME}"
 
-# 7. 如果是停止模式 (--stop / --down)
-if [ "$STOP_MODE" = true ]; then
-    echo "[*] 正在停止 WSL-Tunnel 实例 [$INSTANCE_NAME]..."
-    
+# 7. 辅助函数：完全停止并清理指定实例的网络与进程资源
+stop_instance() {
     # 终止后台 tun2socks 进程
     pkill -f "tun2socks.*${TUN_DEV}" >/dev/null 2>&1 || true
     
@@ -178,7 +176,12 @@ if [ "$STOP_MODE" = true ]; then
     # 清理运行时 DNS 配置
     rm -rf "$RUN_DIR" 2>/dev/null || true
     rm -f "/tmp/tun2socks-${INSTANCE_NAME}.log" 2>/dev/null || true
-    
+}
+
+# 如果是停止模式 (--stop / --down)
+if [ "$STOP_MODE" = true ]; then
+    echo "[*] 正在停止 WSL-Tunnel 实例 [$INSTANCE_NAME]..."
+    stop_instance
     echo "[+] 实例 [$INSTANCE_NAME] 已成功关停，所有关联网络资源已释放。"
     exit 0
 fi
@@ -255,8 +258,20 @@ if [ -n "$PROXY_HOST" ] && [ "$PROXY_HOST" != "127.0.0.1" ] && [ "$PROXY_HOST" !
     fi
 fi
 
-# 11. 启动并复用 tun2socks 守护进程
+# 11. 检查运行中参数，若代理配置变更则自动重置；否则复用守护进程
 LOG_FILE="/tmp/tun2socks-${INSTANCE_NAME}.log"
+if pgrep -f "tun2socks.*${TUN_DEV}" >/dev/null 2>&1; then
+    RUNNING_PROXY=$(pgrep -af "tun2socks.*${TUN_DEV}" | grep -oP -- '--proxy \K\S+' | head -n 1 || true)
+    if [ -n "$RUNNING_PROXY" ] && [ "$RUNNING_PROXY" != "$PROXY_URL" ]; then
+        echo "[*] 检测到实例 [$INSTANCE_NAME] 代理参数变更:"
+        echo "    运行中配置: $RUNNING_PROXY"
+        echo "    新请求配置: $PROXY_URL"
+        echo "[*] 正在自动重置旧实例以应用新参数..."
+        stop_instance
+        sleep 0.5
+    fi
+fi
+
 if ! pgrep -f "tun2socks.*${TUN_DEV}" >/dev/null 2>&1; then
     echo "[+] 启动 Linux 原生 tun2socks 隧道守护进程 [$INSTANCE_NAME -> $PROXY_URL]..."
     nohup "$T2S_BIN" \
