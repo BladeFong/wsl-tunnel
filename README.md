@@ -74,6 +74,22 @@ Linux VRF 路由域 (l3mdev) ────────────> 隔离 FIB �
 
 * **明文 DNS 可能被污染**：会话内 DNS 为明文 53/UDP（`1.1.1.1` / `8.8.8.8`）。若代理端将该 UDP 直连出网（未走代理节点），墙内网络会对敏感域名注入伪造应答，表现为"同一站点时通时不通、解析到非官方 IP"。建议在代理端让 DNS 的 UDP 走代理节点（例如添加 `DST-PORT,53,PROXY` 规则），或客户端启用加密 DNS（DoH）；高阶场景下，亦可用内置 Fake-IP 状态机的 `sing-box`（极简模式，同样基于 gVisor 协议栈）替代 `tun2socks` 彻底杜绝污染。
 * **在 Windows WSL2 环境下，若隧道后端指向宿主本地端口（`127.0.0.1:<port>`）且设备为笔记本，强烈推荐镜像网络 (Mirrored Mode)**：WSL2 默认的 NAT 模式无法直接访问 Windows 宿主的 `127.0.0.1`，必须改用宿主机网卡 IP；而笔记本频繁漫游（切换 Wi-Fi、手机热点、休眠唤醒）会导致宿主 IP 不断变动并遭遇 Windows 公共网络防火墙拦截。配置 `networkingMode=mirrored` 可使 WSL 内 `127.0.0.1` 永久直通 Windows 宿主同端口，无视物理网络漂移。
+* **代理节点全局模式（Global）与 DNS 解析**：当代理端（如 Clash Verge、Nikki/OpenClash 等基于 Mihomo 内核的客户端）切到全局（Global）模式时，所有流量直接命中 `GLOBAL` 代理组，跳过规则匹配中的 `!adapter.SupportUDP()` 回退逻辑。若订阅中的节点全部为 `type: http`（不支持 UDP），DNS 查询的 UDP 53 包将被丢弃，导致隧道终端断网。为此，脚本默认在会话 DNS 配置中写入 `options use-vc`，强制 glibc 解析器使用 TCP 53 查询（HTTP 节点支持 TCP），确保无论代理端处于规则模式还是全局模式，隧道终端均可正常解析上网。若需退回 UDP 53 解析，可传入 `--udp-dns` 参数。
+  > [!TIP]
+  > **在 Clash Verge / Mihomo 中为隧道配置专属端口与固定分流**：
+  > 若不希望隧道与宿主日常浏览混用通用端口，可在扩展配置（如 Clash Verge 的订阅 Merge 或全局扩展配置）中声明独立入站监听并用 `IN-PORT` 规则分流：
+  > ```yaml
+  > listeners:
+  >   - name: mixed-wsl
+  >     type: mixed
+  >     port: 7895
+  >     listen: 0.0.0.0
+  > 
+  > rules:
+  >   - IN-PORT,7895,节点选择  # 确保置于规则列表顶部，进 7895 端口的流量强制定向到指定策略组
+  > ```
+  > 配合本脚本默认启用的 `options use-vc`（TCP 53），即使后续在客户端顶栏将模式切至全局（Global），隧道终端的 DNS 与 TCP 流量也绝不会因缺少 UDP 支持而中断。
+* **`ping` (ICMP) 不可用**：SOCKS5 代理仅支持 TCP 和 UDP 协议转发，不支持 ICMP。因此隧道终端内 `ping` 命令无法工作（报 `无法分配被请求的地址`），这是 SOCKS5 协议的固有限制，不影响 HTTP/HTTPS、SSH、Git 等所有基于 TCP/UDP 的正常使用。验证连通性请使用 `curl` 替代。
 
 ---
 
@@ -176,6 +192,7 @@ cd ~/wsl-tunnel/server-patch
 | `-d, --dns` | 该会话内独立的 DNS 服务器 IP | `1.1.1.1` |
 | `-b, --bin` | 手动指定 `tun2socks` 二进制绝对路径 | 自动搜索（环境变量/PATH/标准目录） |
 | `-k, --stop, --down` | 停止指定实例的守护进程并清理全部虚拟网卡和路由表 | - |
+| `--udp-dns` | 禁用 TCP 强制 DNS，改用 UDP 53（默认启用 TCP 53 以兼容 HTTP 代理节点全局模式） | 默认关闭（即默认使用 TCP 53） |
 | `-h, --help` | 显示帮助信息并退出 | - |
 
 > [!NOTE]

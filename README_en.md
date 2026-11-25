@@ -74,6 +74,22 @@ Linux VRF Domain (l3mdev) ────────────> Dedicated FIB ta
 
 * **Plaintext DNS may be poisoned**: Session DNS uses plaintext UDP 53 (`1.1.1.1` / `8.8.8.8`). If the proxy side egresses that UDP directly (not through the proxy node), in-country networks can inject forged answers for sensitive domains — symptoms include "sometimes works, sometimes not" and non-official resolved IPs. Prefer routing DNS UDP through the proxy node (e.g. adding a `DST-PORT,53,PROXY` rule), enabling encrypted DNS (DoH) on the client, or substituting `tun2socks` with a minimal `sing-box` binary (also powered by gVisor) featuring built-in Fake-IP to eliminate plaintext queries entirely.
 * **In Windows WSL2, tunnel instances targeting host local ports (`127.0.0.1:<port>`) on mobile/laptop devices strongly require Mirrored Mode**: WSL2's default NAT mode cannot directly access the Windows host's `127.0.0.1`, forcing the use of dynamic host adapter IPs. On laptops where networks shift frequently (changing Wi-Fi, mobile hotspots, sleep/wake cycles), host IPs break constantly and encounter Windows Firewall blocks on public network profiles. Configuring `networkingMode=mirrored` keeps `127.0.0.1` permanently routed to the Windows host, unaffected by physical network changes.
+* **Proxy Global Mode and DNS Resolution**: When the proxy client (e.g. Clash Verge, Nikki/OpenClash, or any Mihomo-based client) is switched to Global mode, all traffic hits the `GLOBAL` proxy group directly, bypassing the `!adapter.SupportUDP()` fallback logic in rule matching. If all subscription nodes are `type: http` (which does not support UDP), DNS query UDP 53 packets are silently dropped, breaking name resolution in the tunnel terminal. To address this, the script writes `options use-vc` into the session's DNS configuration by default, forcing glibc's resolver to use TCP 53 (which HTTP proxy nodes do support). This ensures the tunnel terminal resolves and connects normally regardless of whether the proxy client is in Rule or Global mode. To revert to UDP 53 resolution, pass the `--udp-dns` flag.
+  > [!TIP]
+  > **Configuring Dedicated Listener & Routing in Clash Verge / Mihomo**:
+  > To isolate tunnel traffic from general host browsing, declare an independent inbound listener and steer it via `IN-PORT` rules in your configuration (e.g., Clash Verge Subscription Merge or script):
+  > ```yaml
+  > listeners:
+  >   - name: mixed-wsl
+  >     type: mixed
+  >     port: 7895
+  >     listen: 0.0.0.0
+  > 
+  > rules:
+  >   - IN-PORT,7895,Proxy  # Ensure this rule is at the top to direct 7895 traffic to the designated proxy group
+  > ```
+  > Combined with `options use-vc` (TCP 53) enabled by default in this script, even if the client's global mode is toggled, tunnel DNS and TCP traffic will remain stable and uninterrupted.
+* **`ping` (ICMP) Does Not Work**: SOCKS5 proxies only forward TCP and UDP — ICMP is not supported. Therefore `ping` inside the tunnel terminal will fail (reporting `cannot assign requested address`). This is an inherent limitation of the SOCKS5 protocol and does not affect HTTP/HTTPS, SSH, Git, or any other TCP/UDP-based connectivity. Use `curl` to verify connectivity instead.
 
 ---
 
@@ -176,6 +192,7 @@ cd ~/wsl-tunnel/server-patch
 | `-d, --dns` | Custom DNS server IP address | `1.1.1.1` |
 | `-b, --bin` | Custom path to the `tun2socks` binary | Auto-detected |
 | `-k, --stop, --down` | Tear down the tunnel daemon and release all network devices | - |
+| `--udp-dns` | Disable TCP-forced DNS, use UDP 53 instead (TCP 53 is enabled by default for HTTP proxy node Global mode compatibility) | Off (TCP 53 by default) |
 | `-h, --help` | Display help message and exit | - |
 
 > [!NOTE]

@@ -22,6 +22,7 @@ Options:
   -d, --dns DNS_IP          Custom DNS server for this session
                             Default: 1.1.1.1
   -b, --bin PATH            Explicit path to tun2socks binary
+  --udp-dns                 禁用 TCP 强制 DNS，改用 UDP 53（默认启用 TCP 53 以兼容 HTTP 代理节点全局模式）
   -k, --stop, --down        Stop the specified tunnel instance and clean up network devices
   -h, --help                Show this help message
 EOF
@@ -36,6 +37,7 @@ CUSTOM_TABLE=""
 CUSTOM_DNS="1.1.1.1"
 CUSTOM_BIN=""
 STOP_MODE=false
+TCP_DNS=true   # 默认开启：DNS 解析走 TCP 53（兼容 HTTP 代理节点全局模式）
 
 # 辅助函数：校验参数后是否附带有效值
 require_arg() {
@@ -82,6 +84,10 @@ while [[ $# -gt 0 ]]; do
             ;;
         -k|--stop|--down)
             STOP_MODE=true
+            shift 1
+            ;;
+        --udp-dns)
+            TCP_DNS=false
             shift 1
             ;;
         -h|--help)
@@ -355,15 +361,19 @@ fi
 # 15. 配置受保护的运行时独立 DNS
 mkdir -p "$RUN_DIR"
 chmod 700 "$RUN_DIR"
-cat << EOF_DNS > "$RUN_DIR/resolv.conf"
-nameserver $CUSTOM_DNS
-nameserver 8.8.8.8
-EOF_DNS
+{
+    if [ "$TCP_DNS" = true ]; then
+        echo "options use-vc"
+    fi
+    echo "nameserver $CUSTOM_DNS"
+    echo "nameserver 8.8.8.8"
+} > "$RUN_DIR/resolv.conf"
 
 echo "=================================================="
 echo " WSL-Tunnel 已就绪"
 echo " 实例名称: $INSTANCE_NAME (Table: $TABLE_ID)"
 echo " 代理后端: $PROXY_URL"
+echo " DNS 模式: $([ "$TCP_DNS" = true ] && echo "TCP 53（全局模式兼容）" || echo "UDP 53")"
 echo " 本地回环: 127.0.0.1 (VRF 设备环回, 宿主服务直通)"
 if [ "$IS_WSL" = true ]; then
     echo " 运行环境: WSL ($([ "$IS_WSL_MIRRORED" = true ] && echo "Mirrored" || echo "NAT"))"
