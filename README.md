@@ -74,6 +74,11 @@ Linux VRF 路由域 (l3mdev) ────────────> 隔离 FIB �
 
 * **明文 DNS 可能被污染**：会话内 DNS 为明文 53/UDP（`1.1.1.1` / `8.8.8.8`）。若代理端将该 UDP 直连出网（未走代理节点），墙内网络会对敏感域名注入伪造应答，表现为"同一站点时通时不通、解析到非官方 IP"。建议在代理端让 DNS 的 UDP 走代理节点（例如添加 `DST-PORT,53,PROXY` 规则），或客户端启用加密 DNS（DoH）；高阶场景下，亦可用内置 Fake-IP 状态机的 `sing-box`（极简模式，同样基于 gVisor 协议栈）替代 `tun2socks` 彻底杜绝污染。
 * **在 Windows WSL2 环境下，若隧道后端指向宿主本地端口（`127.0.0.1:<port>`）且设备为笔记本，强烈推荐镜像网络 (Mirrored Mode)**：WSL2 默认的 NAT 模式无法直接访问 Windows 宿主的 `127.0.0.1`，必须改用宿主机网卡 IP；而笔记本频繁漫游（切换 Wi-Fi、手机热点、休眠唤醒）会导致宿主 IP 不断变动并遭遇 Windows 公共网络防火墙拦截。配置 `networkingMode=mirrored` 可使 WSL 内 `127.0.0.1` 永久直通 Windows 宿主同端口，无视物理网络漂移。
+* **单例本地守护进程（C/S 架构工具，如 ADB、Docker CLI/Socket、GDB/LLDB Server、Ollama 等）建议优先在 Windows 宿主或 WSL 普通终端拉起**：
+  此类工具普遍具有“客户端未连上后台服务时自动就地派生守护进程 (Daemon)”的特性（如 `adb` 默认拉起监听 `127.0.0.1:5037` 的 `fork-server`）。
+  - **外层宿主启动（全终端无缝共享）**：得益于内核配置的 `net.ipv4.tcp_l3mdev_accept=1`，运行在最外层（Windows 宿主或 WSL 普通全局域）的监听服务，**天然允许所有内层 VRF 隧道终端跨域复用**。
+  - **内层冷启动陷阱（单向隔离死锁）**：若在**隧道终端**内首次触发并拉起了守护进程，该服务会被打上 `%vrf-xxx` 私有设备标记。Linux 内核机制严禁外部全局域逆向渗透到私有 VRF 设备，导致普通终端或 Windows 侧连接被拒；外部客户端误判为“服务未启动”而重复派生，在 `bind()` 端口时触发 `Address already in use` 彻底死锁；且内部守护进程也可能因出向流量全走代理而丢失局域网广播（如 mDNS 无线配对）。
+  - **最佳实践**：遵循“**外层宿主做 Server，内层沙盒做 Client**”法则，开机优先在 Windows 终端（如 Windows 端 `adb devices`、Docker Desktop、Ollama）或 WSL 普通终端执行一次让守护进程常驻在全局域，各隧道终端便可无感并发共享。
 * **代理节点全局模式（Global）与 DNS 解析**：当代理端（如 Clash Verge、Nikki/OpenClash 等基于 Mihomo 内核的客户端）切到全局（Global）模式时，所有流量直接命中 `GLOBAL` 代理组，跳过规则匹配中的 `!adapter.SupportUDP()` 回退逻辑。若订阅中的节点全部为 `type: http`（不支持 UDP），DNS 查询的 UDP 53 包将被丢弃，导致隧道终端断网。为此，脚本默认在会话 DNS 配置中写入 `options use-vc`，强制 glibc 解析器使用 TCP 53 查询（HTTP 节点支持 TCP），确保无论代理端处于规则模式还是全局模式，隧道终端均可正常解析上网。若需退回 UDP 53 解析，可传入 `--udp-dns` 参数。
   > [!TIP]
   > **在 Clash Verge / Mihomo 中为隧道配置专属端口与固定分流**：
