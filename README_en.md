@@ -94,7 +94,8 @@ Linux VRF Domain (l3mdev) ────────────> Dedicated FIB ta
   >   - IN-PORT,7895,Proxy  # Ensure this rule is at the top to direct 7895 traffic to the designated proxy group
   > ```
   > Combined with `options use-vc` (TCP 53) enabled by default in this script, even if the client's global mode is toggled, tunnel DNS and TCP traffic will remain stable and uninterrupted.
-* **`ping` (ICMP) Does Not Work**: SOCKS5 proxies only forward TCP and UDP — ICMP is not supported. Therefore `ping` inside the tunnel terminal will fail (reporting `cannot assign requested address`). This is an inherent limitation of the SOCKS5 protocol and does not affect HTTP/HTTPS, SSH, Git, or any other TCP/UDP-based connectivity. Use `curl` to verify connectivity instead.
+* **The Tunnel Domain Is Pure IPv4**: DNS resolution inside the tunnel returns IPv4 addresses only (AAAA is filtered within the session); all TCP/UDP applications egress over IPv4, with no extra configuration needed for IPv6 support on target sites.
+* **`ping` Replies Are Locally Simulated**: `ping` works inside the tunnel terminal, but replies are generated locally by the tunnel rather than traveling the real path — they do not reflect actual latency or packet loss. Use `curl` to measure real connectivity quality.
 
 ---
 

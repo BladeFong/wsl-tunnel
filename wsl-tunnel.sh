@@ -361,13 +361,52 @@ fi
 # 15. 配置受保护的运行时独立 DNS
 mkdir -p "$RUN_DIR"
 chmod 700 "$RUN_DIR"
+# no-aaaa（glibc >= 2.36）：域内 getaddrinfo 不再发起 AAAA 查询。隧道域为纯
+# IPv4，而镜像模式会把 Windows 的全局 IPv6 地址同步进 WSL 接口，glibc 据此
+# 判定 IPv6 可用并按 RFC 6724 默认权重将 AAAA 置于 A 之前，域内应用对 AAAA
+# connect 时无可用源地址报 EADDRNOTAVAIL。旧 glibc 对未知 options 静默忽略
+# （resolv/res_init.c 源码实证），仅依赖方案 B 兜底，不影响其余 options。
 {
     if [ "$TCP_DNS" = true ]; then
-        echo "options use-vc"
+        echo "options use-vc no-aaaa"
+    else
+        echo "options no-aaaa"
     fi
     echo "nameserver $CUSTOM_DNS"
     echo "nameserver 8.8.8.8"
 } > "$RUN_DIR/resolv.conf"
+
+# 方案 B 兜底：运行时 gai.conf 将 IPv4-mapped 排序权重提升至 100（高于原生
+# IPv6 的 40），对全版本 glibc 生效。覆盖 /etc/gai.conf 的目标文件由下方创建。
+# 注意 glibc 语义：gai.conf 中出现任意一条生效的 label/precedence 行即清空
+# 对应默认表，故必须写入完整默认表后再附加修改行，不可只写单行。
+[ -e /etc/gai.conf ] || touch /etc/gai.conf
+{
+    cat <<'GAI_CONF'
+label  ::1/128       0
+label  ::/0          1
+label  2002::/16     2
+label  ::/96         3
+label  ::ffff:0:0/96 4
+label  2001::/32     5
+label  fe80::/10     6
+label  2001:0db8::/32 7
+label  fc00::/7      8
+precedence  ::1/128       50
+precedence  ::/0          40
+precedence  2002::/16     30
+precedence  ::/96         20
+precedence  ::ffff:0:0/96 100
+precedence  2001::/32      5
+precedence  fe80::/10      5
+precedence  fc00::/7       3
+precedence  2001:0db8::/32 1
+scopev4 ::ffff:0:0/96  14
+scopev4 fec0::/10      5
+scopev4 fe80::/10      2
+scopev4 ::/0           14
+GAI_CONF
+} > "$RUN_DIR/gai.conf"
 
 echo "=================================================="
 echo " WSL-Tunnel 已就绪"
@@ -436,9 +475,10 @@ fi
 exec unshare -m --propagation slave bash -c '
     mount --make-rslave / 2>/dev/null || true
     mount --bind "$1" /etc/resolv.conf
-    cd "$2"
-    exec ip vrf exec "$3" setpriv \
-        --reuid="$4" --regid="$5" --init-groups \
-        env -i "${@:7}" \
-        "$6" -l
-' _ "$RUN_DIR/resolv.conf" "$TARGET_HOME" "$VRF_NAME" "$TARGET_UID" "$TARGET_GID" "$TARGET_SHELL" "${ENV_ARGS[@]}"
+    mount --bind "$2" /etc/gai.conf 2>/dev/null || true
+    cd "$3"
+    exec ip vrf exec "$4" setpriv \
+        --reuid="$5" --regid="$6" --init-groups \
+        env -i "${@:8}" \
+        "$7" -l
+' _ "$RUN_DIR/resolv.conf" "$RUN_DIR/gai.conf" "$TARGET_HOME" "$VRF_NAME" "$TARGET_UID" "$TARGET_GID" "$TARGET_SHELL" "${ENV_ARGS[@]}"
